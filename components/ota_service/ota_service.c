@@ -97,6 +97,8 @@ static ota_service_err_reason_t ota_service_process(ota_upgrade_ops_t *upgrade_i
     ret = upgrade_info->need_upgrade(handle, &upgrade_info->node);
     if (ret != OTA_SERV_ERR_REASON_SUCCESS) {
         ESP_LOGE(TAG, "No need to upgrade");
+        // This is a temporary solution that does not contain specific information about the cause of the failure
+        return OTA_SERV_ERR_REASON_NO_HIGHER_VERSION;
         goto __end;
     }
     ret = upgrade_info->execute_upgrade(handle, &upgrade_info->node);
