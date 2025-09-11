@@ -209,7 +209,15 @@ static esp_err_t ota_app_partition_finish(void *handle, ota_node_attr_t *node, o
         }
     }
     audio_free(handle);
-    return err;
+
+    if (result == OTA_SERV_ERR_REASON_SUCCESS)
+    {
+        return err; // Return the actual OTA operation result
+    }
+    else
+    {
+        return result; // Return the "no upgrade needed" or other error code
+    }
 }
 
 void ota_app_get_default_proc(ota_upgrade_ops_t *ops)
