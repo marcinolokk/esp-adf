@@ -360,21 +360,29 @@ static void button_task(void *parameters)
                         break;
                     }
                 case ADC_BTN_STATE_PRESSED: {
+                        int voltage = get_adc_voltage(info->adc_ch);
+                        ESP_LOGI(TAG, "Button pressed - Measured voltage: %dmV, Button ID: %d", voltage, cur_act_id);
                         tag->btn_callback((void *)tag->user_data, info->adc_ch, cur_act_id, ADC_BTN_STATE_PRESSED);
                         cur_state = ADC_BTN_STATE_ADC;
                         break;
                     }
                 case ADC_BTN_STATE_LONG_PRESSED: {
+                        int voltage = get_adc_voltage(info->adc_ch);
+                        ESP_LOGI(TAG, "Button long pressed - Measured voltage: %dmV, Button ID: %d", voltage, cur_act_id);
                         tag->btn_callback((void *)tag->user_data, info->adc_ch, cur_act_id, ADC_BTN_STATE_LONG_PRESSED);
                         cur_state = ADC_BTN_STATE_ADC;
                         break;
                     }
                 case ADC_BTN_STATE_LONG_RELEASE: {
+                        int voltage = get_adc_voltage(info->adc_ch);
+                        ESP_LOGI(TAG, "Button long release - Measured voltage: %dmV, Button ID: %d", voltage, cur_act_id);
                         tag->btn_callback((void *)tag->user_data, info->adc_ch, cur_act_id, ADC_BTN_STATE_LONG_RELEASE);
                         cur_state = ADC_BTN_STATE_ADC;
                         break;
                     }
                 case ADC_BTN_STATE_RELEASE: {
+                        int voltage = get_adc_voltage(info->adc_ch);
+                        ESP_LOGI(TAG, "Button release - Measured voltage: %dmV, Button ID: %d", voltage, cur_act_id);
                         tag->btn_callback((void *)tag->user_data, info->adc_ch, cur_act_id, ADC_BTN_STATE_RELEASE);
                         cur_state = ADC_BTN_STATE_ADC;
                         break;
