@@ -81,13 +81,14 @@ extern audio_hal_func_t AUDIO_CODEC_ES7243E_DEFAULT_HANDLE;
  */
 #define FUNC_BUTTON_EN            (1)
 #define ADC_DETECT_GPIO           GPIO_NUM_39
-#define INPUT_KEY_NUM             6
-#define BUTTON_VOLUP_ID           0
-#define BUTTON_VOLDOWN_ID         1
-#define BUTTON_SET_ID             2
-#define BUTTON_PLAY_ID            3
-#define BUTTON_MODE_ID            4
-#define BUTTON_REC_ID             5
+#define INPUT_KEY_NUM             7
+#define BUTTON_VOLUP_ID           1
+#define BUTTON_COLOR_ID           0
+#define BUTTON_VOLDOWN_ID         2
+#define BUTTON_SET_ID             3
+#define BUTTON_PLAY_ID            4
+#define BUTTON_MODE_ID            5
+#define BUTTON_REC_ID             6
 #define INPUT_KEY_DEFAULT_INFO() {                      \
      {                                                  \
         .type = PERIPH_ID_ADC_BTN,                      \
@@ -118,6 +119,11 @@ extern audio_hal_func_t AUDIO_CODEC_ES7243E_DEFAULT_HANDLE;
         .type = PERIPH_ID_ADC_BTN,                      \
         .user_id = INPUT_KEY_USER_ID_VOLDOWN,           \
         .act_id = BUTTON_VOLDOWN_ID,                    \
+    },                                                  \
+    {                                                   \
+        .type = PERIPH_ID_ADC_BTN,                      \
+        .user_id = INPUT_KEY_USER_ID_COLOR,             \
+        .act_id = BUTTON_COLOR_ID,                      \
     }                                                   \
 }
 
