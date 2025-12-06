@@ -95,6 +95,10 @@ typedef struct {
                                                              Request full range of resource if set to 0
                                                              Range size bigger than request size is recommended */
     const char                  *user_agent;            /*!< The User Agent string to send with HTTP requests */
+    bool                        keep_alive_enable;      /*!< Enable keep-alive for persistent connections */
+    int                         keep_alive_idle;        /*!< Keep-alive idle time (seconds), default 5 */
+    int                         keep_alive_interval;    /*!< Keep-alive interval (seconds), default 5 */
+    int                         keep_alive_count;       /*!< Keep-alive retry count, default 3 */
 } http_stream_cfg_t;
 
 #define HTTP_STREAM_TASK_STACK          (6 * 1024)
@@ -117,6 +121,10 @@ typedef struct {
     .cert_pem  = NULL,                           \
     .crt_bundle_attach = NULL,                   \
     .user_agent = NULL,                          \
+    .keep_alive_enable = false,                  \
+    .keep_alive_idle = 5,                        \
+    .keep_alive_interval = 5,                    \
+    .keep_alive_count = 3,                       \
 }
 
 /**

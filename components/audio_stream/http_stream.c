@@ -101,6 +101,10 @@ typedef struct http_stream {
     int64_t                         request_range_end;
     bool                            is_last_range;
     const char                      *user_agent;
+    bool                            keep_alive_enable;
+    int                             keep_alive_idle;
+    int                             keep_alive_interval;
+    int                             keep_alive_count;
 } http_stream_t;
 
 static esp_err_t http_stream_auto_connect_next_track(audio_element_handle_t el);
@@ -588,6 +592,10 @@ _stream_open_begin:
             .crt_bundle_attach = http->crt_bundle_attach,
 #endif //  (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 3, 0)) && defined CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
             .user_agent = http->user_agent,
+            .keep_alive_enable = http->keep_alive_enable,
+            .keep_alive_idle = http->keep_alive_idle,
+            .keep_alive_interval = http->keep_alive_interval,
+            .keep_alive_count = http->keep_alive_count,
         };
         http->client = esp_http_client_init(&http_cfg);
         AUDIO_MEM_CHECK(TAG, http->client, return ESP_ERR_NO_MEM);
@@ -873,6 +881,10 @@ audio_element_handle_t http_stream_init(http_stream_cfg_t *config)
     http->user_data = config->user_data;
     http->cert_pem = config->cert_pem;
     http->user_agent = config->user_agent;
+    http->keep_alive_enable = config->keep_alive_enable;
+    http->keep_alive_idle = config->keep_alive_idle;
+    http->keep_alive_interval = config->keep_alive_interval;
+    http->keep_alive_count = config->keep_alive_count;
 
     if (config->crt_bundle_attach) {
 #if  (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 3, 0))
