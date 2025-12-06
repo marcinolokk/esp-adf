@@ -109,8 +109,8 @@ esp_err_t es7243e_adc_init(audio_hal_codec_config_t *codec_cfg)
     ret |= es7243e_write_reg(0x1C, 0x44);
     ret |= es7243e_write_reg(0x1E, 0x00);
     ret |= es7243e_write_reg(0x1F, 0x0C);
-    ret |= es7243e_write_reg(0x20, 0x1A); //PGA gain +30dB
-    ret |= es7243e_write_reg(0x21, 0x1A); //PGA gain +30dB
+    ret |= es7243e_write_reg(0x20, 0x1A);  // PGA gain ~32.5dB (0x1A * 1.25dB/step)
+    ret |= es7243e_write_reg(0x21, 0x1A);  // PGA gain ~32.5dB (0x1A * 1.25dB/step)
 
     ret |= es7243e_write_reg(0x00, 0x80); //Slave  Mode
     ret |= es7243e_write_reg(0x01, 0x3A);
@@ -135,8 +135,8 @@ esp_err_t es7243e_adc_ctrl_state(audio_hal_codec_mode_t mode, audio_hal_ctrl_t c
         ret |= es7243e_write_reg(0xF9, 0x00);
         ret |= es7243e_write_reg(0x04, 0x01);
         ret |= es7243e_write_reg(0x17, 0x01);
-        ret |= es7243e_write_reg(0x20, 0x10);
-        ret |= es7243e_write_reg(0x21, 0x10);
+        ret |= es7243e_write_reg(0x20, 0x1E);  // PGA gain ~37.5dB (max)
+        ret |= es7243e_write_reg(0x21, 0x1E);  // PGA gain ~37.5dB (max)
         ret |= es7243e_write_reg(0x00, 0x80);
         ret |= es7243e_write_reg(0x01, 0x3A);
         ret |= es7243e_write_reg(0x16, 0x3F);
@@ -167,7 +167,33 @@ esp_err_t es7243e_adc_config_i2s(audio_hal_codec_mode_t mode, audio_hal_codec_i2
 
 esp_err_t es7243e_adc_set_voice_volume(int volume)
 {
-    return ESP_OK;
+    esp_err_t ret = ESP_OK;
+
+    // Clamp volume to valid range
+    if (volume > 100) {
+        volume = 100;
+    }
+    if (volume < 0) {
+        volume = 0;
+    }
+
+    // Map volume 0-100 to PGA gain register value 0x00-0x1E
+    // 0x00 = 0dB (minimum), 0x1E = 37.5dB (maximum)
+    // Each step is approximately 1.25dB (37.5dB / 30 steps)
+    uint8_t reg_value = (volume * 0x1E) / 100;
+
+    // Write to both left (0x20) and right (0x21) PGA gain registers
+    ret |= es7243e_write_reg(0x20, reg_value);
+    ret |= es7243e_write_reg(0x21, reg_value);
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Set microphone PGA gain: volume=%d, reg=0x%02X (~%.1fdB)",
+                 volume, reg_value, reg_value * 1.25f);
+    } else {
+        ESP_LOGE(TAG, "Failed to set microphone gain");
+    }
+
+    return ret;
 }
 
 esp_err_t es7243e_adc_get_voice_volume(int *volume)
