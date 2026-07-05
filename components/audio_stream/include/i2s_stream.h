@@ -456,6 +456,63 @@ esp_err_t i2s_alc_volume_get(audio_element_handle_t i2s_stream, int *volume);
  */
 esp_err_t i2s_stream_sync_delay(audio_element_handle_t i2s_stream, int delay_ms);
 
+/**
+ * @brief  Mix-hook callback type.
+ *
+ * @note   Called from the I2S writer element task for every output chunk on the
+ *         playback path, just before the chunk is written to I2S. `buf` is the
+ *         interleaved PCM about to be written and may be modified in place. The
+ *         hook runs in the audio task context, so it must be fast and must not
+ *         block.
+ *
+ * @param  buf          Interleaved PCM buffer about to be written to I2S
+ * @param  len          Length of the buffer in bytes
+ * @param  sample_rate  Sample rate of the buffer (Hz)
+ * @param  channels     Number of interleaved channels
+ * @param  bits         Bits per sample
+ */
+typedef void (*i2s_stream_mix_hook_t)(char *buf, int len, int sample_rate, int channels, int bits);
+
+/**
+ * @brief  Install a global mix hook invoked by every I2S writer element just
+ *         before each output chunk is written. Pass NULL to disable.
+ */
+esp_err_t i2s_stream_set_mix_hook(i2s_stream_mix_hook_t hook);  /* implemented in i2s_stream_idf5.c (IDF >= 5.0 builds) */
+
+/**
+ * @brief  Number of currently-open I2S writer (TX) elements on a port.
+ *
+ * @param[in]  port  I2S port number
+ *
+ * @return  Count of open writer elements (0 if port is out of range)
+ */
+int i2s_stream_tx_active_count(int port);
+
+#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0))
+/**
+ * @brief  Get the shared TX channel handle of a port and its currently
+ *         configured standard-mode format.
+ *
+ * @note   Valid only for STD-mode channels (the format fields live in a union
+ *         with the PDM/TDM configs). The handle stays owned by the i2s_stream
+ *         layer; callers may i2s_channel_write() to it, but only while no
+ *         writer element is open on the port (see i2s_stream_tx_active_count),
+ *         and must not disable, delete, or reconfigure it.
+ *
+ * @param[in]   port             I2S port number
+ * @param[out]  out_handle       TX channel handle, or NULL if none created yet
+ * @param[out]  out_sample_rate  Currently configured sample rate (Hz)
+ * @param[out]  out_channels     1 (mono slot) or 2 (stereo slot)
+ * @param[out]  out_bits         Currently configured data bit width
+ *
+ * @return
+ *     - ESP_OK                 TX channel exists; outputs are valid
+ *     - ESP_ERR_INVALID_STATE  No TX channel created on this port yet
+ *     - ESP_ERR_INVALID_ARG    Port out of range
+ */
+esp_err_t i2s_stream_get_tx_info(int port, i2s_chan_handle_t *out_handle, int *out_sample_rate, int *out_channels, int *out_bits);
+#endif  // ESP_IDF_VERSION >= 5.0
+
 #ifdef __cplusplus
 }
 #endif

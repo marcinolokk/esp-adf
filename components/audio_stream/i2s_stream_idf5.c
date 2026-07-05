@@ -24,6 +24,7 @@
 
 #include "audio_idf_version.h"
 #if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0))
+#include <stdatomic.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -84,6 +85,28 @@ static void *s_i2s_rx_mutex[SOC_I2S_NUM];
 
 static struct i2s_key_slot_s i2s_key_slot[SOC_I2S_NUM];
 
+// Optional global mix hook, invoked by every I2S writer element just before each
+// output chunk is written (see i2s_stream_set_mix_hook). s_tx_open_cnt tracks how
+// many writer elements are currently open per port so callers can tell whether a
+// playback path is live. Element tasks run on either core, so the counter must be
+// atomic: a lost decrement would leave callers believing TX is busy forever.
+static volatile i2s_stream_mix_hook_t s_mix_hook = NULL;
+static _Atomic int s_tx_open_cnt[SOC_I2S_NUM];
+
+esp_err_t i2s_stream_set_mix_hook(i2s_stream_mix_hook_t hook)
+{
+    s_mix_hook = hook;
+    return ESP_OK;
+}
+
+int i2s_stream_tx_active_count(int port)
+{
+    if (port < 0 || port >= SOC_I2S_NUM) {
+        return 0;
+    }
+    return atomic_load(&s_tx_open_cnt[port]);
+}
+
 #define i2s_safe_lock_create(lock) do {           \
     if (lock == NULL) {                           \
         lock = xSemaphoreCreateRecursiveMutex();  \
@@ -101,6 +124,31 @@ static struct i2s_key_slot_s i2s_key_slot[SOC_I2S_NUM];
         xSemaphoreGiveRecursive(lock);  \
     }                                   \
 } while (0)
+
+esp_err_t i2s_stream_get_tx_info(int port, i2s_chan_handle_t *out_handle, int *out_sample_rate, int *out_channels, int *out_bits)
+{
+    if (port < 0 || port >= SOC_I2S_NUM) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    // STD mode only: tx_std_cfg shares a union with the PDM/TDM configs, so the
+    // format fields are meaningful only for standard-mode channels.
+    i2s_safe_lock(s_i2s_tx_mutex[port]);
+    i2s_chan_handle_t handle = i2s_key_slot[port].tx_handle;
+    if (out_handle) {
+        *out_handle = handle;
+    }
+    if (out_sample_rate) {
+        *out_sample_rate = i2s_key_slot[port].tx_std_cfg.clk_cfg.sample_rate_hz;
+    }
+    if (out_channels) {
+        *out_channels = (i2s_key_slot[port].tx_std_cfg.slot_cfg.slot_mode == I2S_SLOT_MODE_MONO) ? 1 : 2;
+    }
+    if (out_bits) {
+        *out_bits = (int)i2s_key_slot[port].tx_std_cfg.slot_cfg.data_bit_width;
+    }
+    i2s_safe_unlock(s_i2s_tx_mutex[port]);
+    return handle ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
 
 static int i2s_driver_startup(audio_element_handle_t self, i2s_stream_cfg_t *i2s_cfg)
 {
@@ -414,6 +462,9 @@ static esp_err_t _i2s_open(audio_element_handle_t self)
         audio_element_set_input_timeout(self, pdMS_TO_TICKS(cal_i2s_buffer_timeout(self)));
     }
     i2s->is_open = true;
+    if (i2s->type == AUDIO_STREAM_WRITER) {
+        atomic_fetch_add(&s_tx_open_cnt[i2s->port], 1);
+    }
     if (i2s->use_alc) {
         i2s->volume_handle = alc_volume_setup_open();
         if (i2s->volume_handle == NULL) {
@@ -440,8 +491,13 @@ static esp_err_t _i2s_destroy(audio_element_handle_t self)
 static esp_err_t _i2s_close(audio_element_handle_t self)
 {
     i2s_stream_t *i2s = (i2s_stream_t *)audio_element_getdata(self);
+    bool was_open = i2s->is_open;
 
     i2s->is_open = false;
+    // was_open guards against a stray double-close underflowing the counter.
+    if (was_open && i2s->type == AUDIO_STREAM_WRITER) {
+        atomic_fetch_sub(&s_tx_open_cnt[i2s->port], 1);
+    }
     if (AEL_STATE_PAUSED != audio_element_get_state(self)) {
         audio_element_report_pos(self);
         audio_element_set_byte_pos(self, 0);
@@ -522,6 +578,11 @@ static int _i2s_process(audio_element_handle_t self, char *in_buffer, int in_len
         memset(in_buffer, 0x00, in_len);
         r_size = in_len;
         audio_element_multi_output(self, in_buffer, r_size, 0);
+        if (s_mix_hook && i2s->type == AUDIO_STREAM_WRITER) {
+            audio_element_info_t hook_info = { 0 };
+            audio_element_getinfo(self, &hook_info);
+            s_mix_hook(in_buffer, r_size, hook_info.sample_rates, hook_info.channels, hook_info.bits);
+        }
         w_size = audio_element_output(self, in_buffer, r_size);
     } else if (r_size > 0) {
         if (i2s->use_alc) {
@@ -530,6 +591,11 @@ static int _i2s_process(audio_element_handle_t self, char *in_buffer, int in_len
             alc_volume_setup_process(in_buffer, r_size, i2s_info.channels, i2s->volume_handle, i2s->volume);
         }
         audio_element_multi_output(self, in_buffer, r_size, 0);
+        if (s_mix_hook && i2s->type == AUDIO_STREAM_WRITER) {
+            audio_element_info_t hook_info = { 0 };
+            audio_element_getinfo(self, &hook_info);
+            s_mix_hook(in_buffer, r_size, hook_info.sample_rates, hook_info.channels, hook_info.bits);
+        }
         w_size = audio_element_output(self, in_buffer, r_size);
         audio_element_update_byte_pos(self, w_size);
     } else {
