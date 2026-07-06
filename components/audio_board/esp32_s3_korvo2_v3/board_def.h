@@ -139,13 +139,19 @@ extern audio_hal_func_t AUDIO_CODEC_ES7210_DEFAULT_HANDLE;
  * @brief Button Function Definition
  */
 #define FUNC_BUTTON_EN              (1)
-#define INPUT_KEY_NUM               6
-#define BUTTON_VOLUP_ID             0
-#define BUTTON_VOLDOWN_ID           1
-#define BUTTON_SET_ID               2
-#define BUTTON_PLAY_ID              3
-#define BUTTON_MODE_ID              4
-#define BUTTON_REC_ID               5
+// COLOR is the VOL+ & VOL- chord (measured ~265 mV on this board): pressing both
+// volume keys ties two ladder taps together, landing below VOL+ alone (~367 mV).
+// It occupies the lowest rung (act_id 0), so every other button shifts up by one
+// vs. the stock 6-button Korvo-2 map. Keep these IDs in lockstep with the
+// adc_level_step[] windows in audio_board_key_init() (board.c).
+#define INPUT_KEY_NUM               7
+#define BUTTON_COLOR_ID             0
+#define BUTTON_VOLUP_ID             1
+#define BUTTON_VOLDOWN_ID           2
+#define BUTTON_SET_ID               3
+#define BUTTON_PLAY_ID              4
+#define BUTTON_MODE_ID              5
+#define BUTTON_REC_ID               6
 
 #define INPUT_KEY_DEFAULT_INFO() {                      \
      {                                                  \
@@ -177,6 +183,11 @@ extern audio_hal_func_t AUDIO_CODEC_ES7210_DEFAULT_HANDLE;
         .type = PERIPH_ID_ADC_BTN,                      \
         .user_id = INPUT_KEY_USER_ID_VOLDOWN,           \
         .act_id = BUTTON_VOLDOWN_ID,                    \
+    },                                                  \
+    {                                                   \
+        .type = PERIPH_ID_ADC_BTN,                      \
+        .user_id = INPUT_KEY_USER_ID_COLOR,             \
+        .act_id = BUTTON_COLOR_ID,                      \
     }                                                   \
 }
 
