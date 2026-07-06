@@ -582,7 +582,7 @@ _stream_open_begin:
             .url = uri,
             .event_handler = _http_event_handle,
             .user_data = self,
-            .timeout_ms = 30 * 1000,
+            .timeout_ms = 35 * 1000,
             .buffer_size = HTTP_STREAM_BUFFER_SIZE,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 1, 0)
             .buffer_size_tx = 1024,
@@ -885,7 +885,6 @@ audio_element_handle_t http_stream_init(http_stream_cfg_t *config)
     http->keep_alive_idle = config->keep_alive_idle;
     http->keep_alive_interval = config->keep_alive_interval;
     http->keep_alive_count = config->keep_alive_count;
-
     if (config->crt_bundle_attach) {
 #if  (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 3, 0))
     #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
