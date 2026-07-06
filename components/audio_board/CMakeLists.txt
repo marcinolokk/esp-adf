@@ -79,6 +79,15 @@ set(COMPONENT_SRCS
 )
 endif()
 
+if (CONFIG_SMARTY_S3_V1_BOARD)
+message(STATUS "Current board name is " CONFIG_SMARTY_S3_V1_BOARD)
+list(APPEND COMPONENT_ADD_INCLUDEDIRS ./smarty_s3_v1)
+set(COMPONENT_SRCS
+./smarty_s3_v1/board.c
+./smarty_s3_v1/board_pins_config.c
+)
+endif()
+
 if (CONFIG_ESP32_S3_KORVO2L_V1_BOARD)
 message(STATUS "Current board name is " CONFIG_ESP32_S3_KORVO2L_V1_BOARD)
 list(APPEND COMPONENT_ADD_INCLUDEDIRS ./esp32_s3_korvo2l_v1)
