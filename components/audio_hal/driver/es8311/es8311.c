@@ -214,13 +214,33 @@ int8_t get_es8311_mclk_src(void);
 
 static esp_err_t es8311_write_reg(uint8_t reg_addr, uint8_t data)
 {
-    return i2c_bus_write_bytes(i2c_handle, ES8311_ADDR, &reg_addr, sizeof(reg_addr), &data, sizeof(data));
+    esp_err_t ret = i2c_bus_write_bytes(i2c_handle, ES8311_ADDR, &reg_addr, sizeof(reg_addr), &data, sizeof(data));
+    if (ret != ESP_OK) {
+        // The ES8311 shares I2C0 (100 kHz) with the ES7210 and intermittently NACKs
+        // under back-to-back writes (e.g. a mashed VOL button firing a volume write
+        // plus a codec-start burst). One retry after a short settle clears virtually
+        // all of these; only a second consecutive failure is a real error. Return-
+        // code semantics are preserved: ESP_OK if either attempt succeeds.
+        ESP_LOGW(TAG, "es8311 write reg 0x%02x NACKed, retrying", reg_addr);
+        vTaskDelay(pdMS_TO_TICKS(2));
+        ret = i2c_bus_write_bytes(i2c_handle, ES8311_ADDR, &reg_addr, sizeof(reg_addr), &data, sizeof(data));
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "es8311 write reg 0x%02x failed after retry: %s", reg_addr, esp_err_to_name(ret));
+        }
+    }
+    return ret;
 }
 
 static int es8311_read_reg(uint8_t reg_addr)
 {
-    uint8_t data;
-    i2c_bus_read_bytes(i2c_handle, ES8311_ADDR, &reg_addr, sizeof(reg_addr), &data, sizeof(data));
+    // Initialize to the defined fallback: on a bus failure the callers still treat
+    // the return as the register byte, so an uninitialized read must not leak a
+    // garbage value. The int signature is unchanged; 0 is returned on failure.
+    uint8_t data = 0;
+    esp_err_t ret = i2c_bus_read_bytes(i2c_handle, ES8311_ADDR, &reg_addr, sizeof(reg_addr), &data, sizeof(data));
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "es8311 read reg 0x%02x failed: %s", reg_addr, esp_err_to_name(ret));
+    }
     return (int)data;
 }
 

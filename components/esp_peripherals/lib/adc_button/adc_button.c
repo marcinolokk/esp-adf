@@ -361,8 +361,23 @@ static void button_task(void *parameters)
                     }
                 case ADC_BTN_STATE_PRESSED: {
                         int voltage = get_adc_voltage(info->adc_ch);
-                        ESP_LOGI(TAG, "Button pressed - Measured voltage: %dmV, Button ID: %d", voltage, cur_act_id);
-                        tag->btn_callback((void *)tag->user_data, info->adc_ch, cur_act_id, ADC_BTN_STATE_PRESSED);
+                        // Re-validate at dispatch time. cur_act_id was latched two
+                        // samples earlier (ADC_BTN_DETECTED_CNT), but this sample is
+                        // fresh: during rapid clicking the finger may already be off
+                        // (idle voltage -> invalid id) or have bounced into another
+                        // window by now. Dispatching the stale id would fire a real
+                        // CLICK for a button no longer held (phantom press). If the
+                        // fresh window no longer matches, drop the press; a genuine
+                        // hold still reads the same id (its own ladder window) and
+                        // dispatches normally. The state machine returns to ADC below
+                        // either way, so release handling is unchanged.
+                        int fresh_id = get_button_id(find, voltage);
+                        if (fresh_id != cur_act_id) {
+                            ESP_LOGW(TAG, "phantom press dropped: act_id=%d fresh=%dmV", cur_act_id, voltage);
+                        } else {
+                            ESP_LOGI(TAG, "Button pressed - Measured voltage: %dmV, Button ID: %d", voltage, cur_act_id);
+                            tag->btn_callback((void *)tag->user_data, info->adc_ch, cur_act_id, ADC_BTN_STATE_PRESSED);
+                        }
                         cur_state = ADC_BTN_STATE_ADC;
                         break;
                     }
