@@ -105,6 +105,7 @@ typedef struct http_stream {
     int                             keep_alive_idle;
     int                             keep_alive_interval;
     int                             keep_alive_count;
+    bool                            save_client_session;
 } http_stream_t;
 
 static esp_err_t http_stream_auto_connect_next_track(audio_element_handle_t el);
@@ -596,6 +597,9 @@ _stream_open_begin:
             .keep_alive_idle = http->keep_alive_idle,
             .keep_alive_interval = http->keep_alive_interval,
             .keep_alive_count = http->keep_alive_count,
+#if CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS
+            .save_client_session = http->save_client_session,
+#endif
         };
         http->client = esp_http_client_init(&http_cfg);
         AUDIO_MEM_CHECK(TAG, http->client, return ESP_ERR_NO_MEM);
@@ -680,9 +684,13 @@ static esp_err_t _http_close(audio_element_handle_t self)
         http->gzip = NULL;
     }
     if (http->client) {
+        // Close the connection but keep the client handle: even with keep-alive disabled,
+        // `esp_http_client_close()` frees the transport/TLS context (~40KB DRAM) here; what
+        // persists is only the handle struct plus its saved TLS session (a few KB), so the
+        // next `_http_open()` reuses the handle and resumes the session with an abbreviated
+        // handshake instead of a full one. Invariant: the client handle lives as long as
+        // the element; it is released only in `_http_destroy()`.
         esp_http_client_close(http->client);
-        esp_http_client_cleanup(http->client);
-        http->client = NULL;
     }
     return ESP_OK;
 }
@@ -845,6 +853,12 @@ static int _http_process(audio_element_handle_t self, char *in_buffer, int in_le
 static esp_err_t _http_destroy(audio_element_handle_t self)
 {
     http_stream_t *http = (http_stream_t *)audio_element_getdata(self);
+    // The client handle survives open/close cycles (see `_http_close()`);
+    // release it exactly once here at element destroy.
+    if (http->client) {
+        esp_http_client_cleanup(http->client);
+        http->client = NULL;
+    }
     if (http->playlist) {
         audio_free(http->playlist->data);
         audio_free(http->playlist);
@@ -885,6 +899,8 @@ audio_element_handle_t http_stream_init(http_stream_cfg_t *config)
     http->keep_alive_idle = config->keep_alive_idle;
     http->keep_alive_interval = config->keep_alive_interval;
     http->keep_alive_count = config->keep_alive_count;
+    http->save_client_session = config->save_client_session;
+
     if (config->crt_bundle_attach) {
 #if  (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 3, 0))
     #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE

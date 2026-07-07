@@ -99,6 +99,7 @@ typedef struct {
     int                         keep_alive_idle;        /*!< Keep-alive idle time (seconds), default 5 */
     int                         keep_alive_interval;    /*!< Keep-alive interval (seconds), default 5 */
     int                         keep_alive_count;       /*!< Keep-alive retry count, default 3 */
+    bool                        save_client_session;    /*!< Save TLS session to resume it on the next connect of the same client (abbreviated handshake) */
 } http_stream_cfg_t;
 
 #define HTTP_STREAM_TASK_STACK          (6 * 1024)
@@ -125,6 +126,7 @@ typedef struct {
     .keep_alive_idle = 5,                        \
     .keep_alive_interval = 5,                    \
     .keep_alive_count = 3,                       \
+    .save_client_session = false,                \
 }
 
 /**
