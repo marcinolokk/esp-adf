@@ -24,25 +24,37 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
-#include "driver/adc.h"
 #include "math.h"
 #include "audio_mem.h"
-#include "esp_adc_cal.h"
 #include "string.h"
 #include "adc_button.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "audio_thread.h"
 #include "audio_idf_version.h"
+#include "soc/soc_caps.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 
-#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0))
-#define ADC_ATTEN_11db ADC_ATTEN_DB_11
-#define ADC_WIDTH_12Bit ADC_BITWIDTH_12
-#define ADC_WIDTH_13Bit ADC_BITWIDTH_13
-#endif
-
-#define V_REF                           1100
+/*
+ * ADC access (Smarty fork, 2026-11): ported from the legacy driver (driver/adc.h +
+ * esp_adc_cal) to adc_oneshot + adc_cali, which may not coexist with the legacy driver in
+ * one firmware. Each sample comes from the application's read_mv callback when one is
+ * given (it then owns ADC1 and shares it, e.g. with a battery monitor), otherwise from a
+ * private oneshot unit opened by the button task (stock boards and examples). Sampling
+ * (10 samples, trimmed mean of the middle 8), attenuation (12 dB, the same setting the
+ * legacy ADC_ATTEN_DB_11 alias selected), bitwidth and calibration precedence (ESP32 line
+ * fitting: eFuse Two-Point -> eFuse Vref -> V_REF) match the legacy path, so the mV values
+ * and therefore the step tables are unchanged.
+ */
+#define V_REF                           1100   /* ESP32 line fitting: Vref when no eFuse value */
+#define ADC_BTN_ATTEN                   ADC_ATTEN_DB_12
+#define ADC_BTN_READ_RETRIES            3      /* adc_oneshot_read() try-locks ADC1 */
+#define ADC_BTN_MIN_GOOD_SAMPLES        3
 
 #define ADC_SAMPLES_NUM                 10
 #define ADC_SAMPLE_INTERVAL_TIME_MS     20
@@ -70,6 +82,14 @@ typedef struct {
 static const int default_step_level[USER_KEY_MAX] = {0, 683, 1193, 1631, 2090, 2578, 3103};
 static const int DESTROY_BIT = BIT0;
 static bool _task_flag;
+
+static adc_btn_read_mv_fn        s_read_mv;    /* application reader, or NULL */
+static void                     *s_read_ctx;
+static adc_oneshot_unit_handle_t s_unit;       /* private unit, fallback path only */
+static adc_cali_handle_t         s_cali[SOC_ADC_MAX_CHANNEL_NUM];
+static bool                      s_cali_tried[SOC_ADC_MAX_CHANNEL_NUM];
+static int                       s_last_mv = -1;
+static uint32_t                  s_read_failures;
 
 adc_btn_list *adc_btn_create_list(adc_arr_t *adc_conf, int channels)
 {
@@ -141,27 +161,149 @@ esp_err_t adc_btn_destroy_list(adc_btn_list *head)
     return ESP_OK;
 }
 
+/* ---- Fallback path: private ADC1 oneshot unit (used only when no read_mv is given) ---- */
+
+static void fallback_cali_create(int channel)
+{
+    if (channel < 0 || channel >= SOC_ADC_MAX_CHANNEL_NUM || s_cali_tried[channel]) {
+        return;
+    }
+    s_cali_tried[channel] = true;
+    esp_err_t ret = ESP_ERR_NOT_SUPPORTED;
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    adc_cali_curve_fitting_config_t cfg = {
+        .unit_id = ADC_UNIT_1,
+        .chan = channel,
+        .atten = ADC_BTN_ATTEN,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    ret = adc_cali_create_scheme_curve_fitting(&cfg, &s_cali[channel]);
+#elif ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+    adc_cali_line_fitting_config_t cfg = {
+        .unit_id = ADC_UNIT_1,
+        .atten = ADC_BTN_ATTEN,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+#if CONFIG_IDF_TARGET_ESP32
+        .default_vref = V_REF,
+#endif
+    };
+    ret = adc_cali_create_scheme_line_fitting(&cfg, &s_cali[channel]);
+#endif
+    if (ret != ESP_OK) {
+        s_cali[channel] = NULL;
+        ESP_LOGW(TAG, "ADC1 ch%d: no calibration (%s), using the uncalibrated approximation",
+                 channel, esp_err_to_name(ret));
+    }
+}
+
+static void fallback_cali_delete(int channel)
+{
+    if (s_cali[channel] == NULL) {
+        return;
+    }
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    adc_cali_delete_scheme_curve_fitting(s_cali[channel]);
+#elif ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+    adc_cali_delete_scheme_line_fitting(s_cali[channel]);
+#endif
+    s_cali[channel] = NULL;
+}
+
+static void fallback_channel_init(int channel)
+{
+    if (s_unit == NULL) {
+        return;
+    }
+    adc_oneshot_chan_cfg_t cfg = {
+        .atten = ADC_BTN_ATTEN,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    esp_err_t ret = adc_oneshot_config_channel(s_unit, channel, &cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "ADC1 ch%d config failed: %s", channel, esp_err_to_name(ret));
+        return;
+    }
+    fallback_cali_create(channel);
+}
+
+static void fallback_unit_open(void)
+{
+    adc_oneshot_unit_init_cfg_t cfg = {
+        .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    esp_err_t ret = adc_oneshot_new_unit(&cfg, &s_unit);
+    if (ret != ESP_OK) {
+        s_unit = NULL;
+        ESP_LOGE(TAG, "ADC1 open failed (%s): buttons are inactive. If the application "
+                 "already owns ADC1, pass it in via periph_adc_button_cfg_t.read_mv",
+                 esp_err_to_name(ret));
+    }
+}
+
+static void fallback_unit_close(void)
+{
+    for (int ch = 0; ch < SOC_ADC_MAX_CHANNEL_NUM; ch++) {
+        fallback_cali_delete(ch);
+        s_cali_tried[ch] = false;
+    }
+    if (s_unit) {
+        adc_oneshot_del_unit(s_unit);
+        s_unit = NULL;
+    }
+}
+
+static int fallback_read_mv(int channel)
+{
+    if (s_unit == NULL || channel < 0 || channel >= SOC_ADC_MAX_CHANNEL_NUM) {
+        return -1;
+    }
+    int raw = 0;
+    esp_err_t ret = ESP_FAIL;
+    for (int attempt = 0; attempt < ADC_BTN_READ_RETRIES; attempt++) {
+        ret = adc_oneshot_read(s_unit, channel, &raw);
+        if (ret != ESP_ERR_TIMEOUT) {
+            break;
+        }
+        esp_rom_delay_us(20);  /* another task holds ADC1 for one conversion */
+    }
+    if (ret != ESP_OK) {
+        return -1;
+    }
+    if (s_cali[channel]) {
+        int mv = 0;
+        if (adc_cali_raw_to_voltage(s_cali[channel], raw, &mv) == ESP_OK) {
+            return mv;
+        }
+        return -1;
+    }
+    return raw * 3100 / ((1 << SOC_ADC_RTC_MAX_BITWIDTH) - 1);
+}
+
+/* One reading = ADC_SAMPLES_NUM samples, sorted, mean of all but the lowest and highest. */
 static int get_adc_voltage(int channel)
 {
     uint32_t data[ADC_SAMPLES_NUM] = { 0 };
     uint32_t sum = 0;
     int tmp = 0;
-#if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32S3
-    esp_adc_cal_characteristics_t characteristics;
-#if CONFIG_IDF_TARGET_ESP32
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_11db, ADC_WIDTH_12Bit, V_REF, &characteristics);
-#elif CONFIG_IDF_TARGET_ESP32S2
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_11db, ADC_WIDTH_BIT_13, 0, &characteristics);
-#else
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_11db, ADC_WIDTH_12Bit, 0, &characteristics);
-#endif
+    int n = 0;
 
     for (int i = 0; i < ADC_SAMPLES_NUM; ++i) {
-        esp_adc_cal_get_voltage(channel, &characteristics, &data[i]);
+        int mv = s_read_mv ? s_read_mv(channel, s_read_ctx) : fallback_read_mv(channel);
+        if (mv >= 0) {
+            data[n++] = (uint32_t)mv;
+        }
     }
-#endif
-    for (int j = 0; j < ADC_SAMPLES_NUM - 1; j++) {
-        for (int i = 0; i < ADC_SAMPLES_NUM - j - 1; i++) {
+    if (n < ADC_BTN_MIN_GOOD_SAMPLES) {
+        /* Keep the previous reading so a read glitch never looks like a key release. */
+        if ((s_read_failures++ % 256) == 0) {
+            ESP_LOGW(TAG, "ADC1 ch%d: only %d/%d samples read (failures: %" PRIu32 ")",
+                     channel, n, ADC_SAMPLES_NUM, s_read_failures);
+        }
+        return s_last_mv;
+    }
+    for (int j = 0; j < n - 1; j++) {
+        for (int i = 0; i < n - j - 1; i++) {
             if (data[i] > data[i + 1]) {
                 tmp = data[i];
                 data[i] = data[i + 1];
@@ -169,9 +311,10 @@ static int get_adc_voltage(int channel)
             }
         }
     }
-    for (int num = 1; num < ADC_SAMPLES_NUM - 1; num++)
+    for (int num = 1; num < n - 1; num++)
         sum += data[num];
-    return (sum / (ADC_SAMPLES_NUM - 2));
+    s_last_mv = sum / (n - 2);
+    return s_last_mv;
 }
 
 static int get_button_id(adc_btn_list *node, int adc)
@@ -280,22 +423,26 @@ static void button_task(void *parameters)
     adc_btn_list *head = tag->head;
     adc_btn_list *find = head;
     xEventGroupClearBits(g_event_bit, DESTROY_BIT);
-#if CONFIG_IDF_TARGET_ESP32S2
-    adc1_config_width(ADC_WIDTH_BIT_13);
-#else
-    adc1_config_width(ADC_WIDTH_BIT_12);
-#endif
+    if (s_read_mv) {
+        ESP_LOGI(TAG, "ADC1 via application reader");
+    } else {
+        fallback_unit_open();
+    }
 
     while (find) {
         adc_arr_t *info = &(find->adc_info);
         reset_btn(find->btn_dscp, info->total_steps);
-        adc1_config_channel_atten(info->adc_ch, ADC_ATTEN_11db);
+        if (!s_read_mv) {
+            fallback_channel_init(info->adc_ch);
+        }
         find = find->next;
     }
     find = head;
 
 #if defined ENABLE_ADC_VOLUME
-    adc1_config_channel_atten(DIAL_adc_ch, ADC_ATTEN_11db);
+    if (!s_read_mv) {
+        fallback_channel_init(DIAL_adc_ch);
+    }
     short adc_vol_prev = ADC_BTN_INVALID_ID;
     short adc_vol_cur = ADC_BTN_INVALID_ID;
     short internal_time_ms = DIAL_VOL_INTERVAL_TIME_MS / ADC_SAMPLE_INTERVAL_TIME_MS; /// 10 * 10 = 100ms
@@ -413,6 +560,10 @@ static void button_task(void *parameters)
         vTaskDelay(ADC_SAMPLE_INTERVAL_TIME_MS / portTICK_PERIOD_MS);
     }
 
+    if (!s_read_mv) {
+        fallback_unit_close();
+    }
+    s_last_mv = -1;
     if (g_event_bit) {
         xEventGroupSetBits(g_event_bit, DESTROY_BIT);
     }
@@ -435,11 +586,19 @@ void adc_btn_delete_task(void)
 
 void adc_btn_init(void *user_data, adc_button_callback cb, adc_btn_list *head, adc_btn_task_cfg_t *task_cfg)
 {
+    adc_btn_init_with_reader(user_data, cb, head, task_cfg, NULL, NULL);
+}
+
+void adc_btn_init_with_reader(void *user_data, adc_button_callback cb, adc_btn_list *head,
+                              adc_btn_task_cfg_t *task_cfg, adc_btn_read_mv_fn read_mv, void *read_ctx)
+{
     adc_btn_tag_t *tag = audio_calloc(1, sizeof(adc_btn_tag_t));
     if (NULL == tag) {
         ESP_LOGE(TAG, "Memory allocation failed! Line: %d", __LINE__);
         return;
     }
+    s_read_mv = read_mv;
+    s_read_ctx = read_ctx;
     tag->user_data = user_data;
     tag->head = head;
     tag->btn_callback = cb;

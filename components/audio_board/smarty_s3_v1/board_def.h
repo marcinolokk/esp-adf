@@ -114,7 +114,7 @@ extern audio_hal_func_t AUDIO_CODEC_ES7243E_DEFAULT_HANDLE;
 /**
  * @brief Button Function Definition
  *
- * Resistor ladder on GPIO1 = ADC1_CHANNEL_0 (set explicitly in board.c). Same
+ * Resistor ladder on GPIO1 = ADC_CHANNEL_0 (set explicitly in board.c). Same
  * ladder as LyraT-Mini, so the thresholds (btn_array in board.c) are unchanged.
  * COLOR is the VOL+ & VOL- chord and occupies the lowest rung (act_id 0); every
  * other button shifts up by one vs. the stock 6-button map. The user IDs below

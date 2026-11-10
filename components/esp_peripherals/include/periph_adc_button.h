@@ -25,7 +25,7 @@
 #ifndef _PERIPH_ADC_BUTTON_H_
 #define _PERIPH_ADC_BUTTON_H_
 
-#include "driver/adc.h"
+#include "hal/adc_types.h"
 #include "adc_button.h"
 #include "esp_peripherals.h"
 
@@ -44,6 +44,9 @@ typedef struct {
     adc_arr_t *arr;  /*!< An array with configuration of buttons */
     int arr_size;    /*!< The array size */
     adc_btn_task_cfg_t task_cfg; /*!< Adc button task configuration */
+    adc_btn_read_mv_fn read_mv;  /*!< Optional sample reader for an application that owns ADC1.
+                                      NULL (default): the button task opens ADC1 itself */
+    void *read_ctx;              /*!< Passed to read_mv */
 } periph_adc_button_cfg_t;
 
 #define PERIPH_ADC_BUTTON_DEFAULT_CONFIG() {   \
@@ -64,20 +67,20 @@ typedef enum {
 } periph_adc_button_event_id_t;
 
 /**
-* ESP32 ADC1 channels and GPIO table
-*   ADC1_CHANNEL_0 -  GPIO36
-*   ADC1_CHANNEL_1 -  GPIO37
-*   ADC1_CHANNEL_2 -  GPIO38
-*   ADC1_CHANNEL_3 -  GPIO39
-*   ADC1_CHANNEL_4 -  GPIO32
-*   ADC1_CHANNEL_5 -  GPIO33
-*   ADC1_CHANNEL_6 -  GPIO34
-*   ADC1_CHANNEL_7 -  GPIO35
+* ESP32 ADC1 channels and GPIO table (adc_ch is always an ADC1 channel)
+*   ADC_CHANNEL_0 -  GPIO36
+*   ADC_CHANNEL_1 -  GPIO37
+*   ADC_CHANNEL_2 -  GPIO38
+*   ADC_CHANNEL_3 -  GPIO39
+*   ADC_CHANNEL_4 -  GPIO32
+*   ADC_CHANNEL_5 -  GPIO33
+*   ADC_CHANNEL_6 -  GPIO34
+*   ADC_CHANNEL_7 -  GPIO35
 *
 **/
 
 #define ADC_DEFAULT_ARR() {   \
-    .adc_ch = ADC1_CHANNEL_3, \
+    .adc_ch = ADC_CHANNEL_3,  \
     .adc_level_step = NULL,   \
     .total_steps = 6,         \
     .press_judge_time = 3000, \

@@ -156,7 +156,7 @@ esp_err_t audio_board_key_init(esp_periph_set_handle_t set)
     periph_adc_button_cfg_t adc_btn_cfg = PERIPH_ADC_BUTTON_DEFAULT_CONFIG();
     adc_arr_t adc_btn_tag = ADC_DEFAULT_ARR();
     adc_btn_tag.total_steps = 7;
-    adc_btn_tag.adc_ch = ADC1_CHANNEL_4;
+    adc_btn_tag.adc_ch = ADC_CHANNEL_4;
     // 7 windows, each (low, high] in mV. Rung 0 = COLOR (VOL+ & VOL- chord,
     // measured ~265 mV) split from the old VOL+ window: boundary at 315 sits
     // midway between the chord (265) and VOL+ alone (367), ~50 mV margin each

@@ -132,10 +132,10 @@ esp_err_t audio_board_key_init(esp_periph_set_handle_t set)
     periph_adc_button_cfg_t adc_btn_cfg = PERIPH_ADC_BUTTON_DEFAULT_CONFIG();
     adc_arr_t adc_btn_tag = ADC_DEFAULT_ARR();
     adc_btn_tag.total_steps = 7;
-    // Button ladder is on GPIO1 = ADC1_CHANNEL_0. Set the channel EXPLICITLY:
+    // Button ladder is on GPIO1 = ADC_CHANNEL_0. Set the channel EXPLICITLY:
     // LyraT-Mini silently inherits the periph default channel, which is a trap on
     // a board whose ladder pin differs. (Korvo-2 sets its channel explicitly too.)
-    adc_btn_tag.adc_ch = ADC1_CHANNEL_0;
+    adc_btn_tag.adc_ch = ADC_CHANNEL_0;
     // Same ladder resistors as LyraT-Mini, so the same windows apply: COLOR is the
     // VOL+ & VOL- chord (~282 mV, rung 0), then VOL+ (~380), VOL- (~819) ... REC
     // (~2408). Must match the BUTTON_*_ID order in board_def.h (COLOR=0, ...).

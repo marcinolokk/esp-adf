@@ -79,7 +79,28 @@ typedef struct {
 
 typedef void (*adc_button_callback) (void *user_data, int adc, int id, adc_btn_state_t state);
 
+/**
+ * @brief  Application-supplied single-sample reader for an ADC1 channel.
+ *
+ *         Lets an application that owns ADC1 (one adc_oneshot unit per firmware) share it
+ *         with the button task. Called ADC_SAMPLES_NUM times per reading from the button
+ *         task; the button code keeps doing its own averaging.
+ *
+ * @param  adc_ch  ADC1 channel number (adc_arr_t.adc_ch)
+ * @param  ctx     the read_ctx passed at init
+ *
+ * @return calibrated millivolts (>= 0) on success, negative on failure
+ */
+typedef int (*adc_btn_read_mv_fn)(int adc_ch, void *ctx);
+
 void adc_btn_init(void *user_data, adc_button_callback cb, adc_btn_list *head, adc_btn_task_cfg_t *task_cfg);
+
+/**
+ * @brief  As adc_btn_init(), with an optional sample reader. read_mv == NULL: the button
+ *         task opens a private ADC1 adc_oneshot unit itself.
+ */
+void adc_btn_init_with_reader(void *user_data, adc_button_callback cb, adc_btn_list *head,
+                              adc_btn_task_cfg_t *task_cfg, adc_btn_read_mv_fn read_mv, void *read_ctx);
 
 adc_btn_list *adc_btn_create_list(adc_arr_t *adc_conf, int channels);
 

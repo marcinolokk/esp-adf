@@ -68,7 +68,8 @@ list(APPEND COMPONENT_REQUIRES esp_lcd)
 ENDIF()
 
 if (idf_version VERSION_GREATER_EQUAL "5.0")
-list(APPEND COMPONENT_PRIV_REQUIRES esp_adc)
+# Public: periph_adc_button.h includes hal/adc_types.h and the cfg carries ADC channel types.
+list(APPEND COMPONENT_REQUIRES esp_adc)
 else()
 list(APPEND COMPONENT_PRIV_REQUIRES esp_adc_cal)
 endif()
